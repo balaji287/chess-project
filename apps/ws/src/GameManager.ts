@@ -18,6 +18,7 @@ import { db } from './db';
 import { socketManager, User } from './SocketManager';
 import { Square } from 'chess.js';
 import { GameStatus } from '@prisma/client';
+import { handleVideoSignal, isVideoSignalType, notifyVideoPeerLeft } from './VideoSignaling';
 
 export class GameManager {
   private games: Game[];
@@ -42,6 +43,7 @@ export class GameManager {
       return;
     }
     this.users = this.users.filter((user) => user.socket !== socket);
+    notifyVideoPeerLeft(user, this.games);
     socketManager.removeUser(user);
   }
 
@@ -52,6 +54,13 @@ export class GameManager {
   private addHandler(user: User) {
     user.socket.on('message', async (data) => {
       const message = JSON.parse(data.toString());
+
+      // Video-call (WebRTC) signaling is relayed only between the two players.
+      if (isVideoSignalType(message.type)) {
+        handleVideoSignal(user, message, this.games, data.toString().length);
+        return;
+      }
+
       if (message.type === INIT_GAME) {
         if (this.pendingGameId) {
           const game = this.games.find((x) => x.gameId === this.pendingGameId);
@@ -67,7 +76,7 @@ export class GameManager {
                 payload: {
                   message: 'Trying to Connect with yourself?',
                 },
-              }),
+              })
             );
             return;
           }
@@ -83,8 +92,8 @@ export class GameManager {
             game.gameId,
             JSON.stringify({
               type: GAME_ADDED,
-              gameId:game.gameId,
-            }),
+              gameId: game.gameId,
+            })
           );
         }
       }
@@ -100,13 +109,13 @@ export class GameManager {
         }
       }
 
-      if (message.type === EXIT_GAME){
+      if (message.type === EXIT_GAME) {
         const gameId = message.payload.gameId;
         const game = this.games.find((game) => game.gameId === gameId);
 
         if (game) {
           game.exitGame(user);
-          this.removeGame(game.gameId)
+          this.removeGame(game.gameId);
         }
       }
 
@@ -131,7 +140,7 @@ export class GameManager {
         });
 
         // There is a game created but no second player available
-        
+
         if (availableGame && !availableGame.player2UserId) {
           socketManager.addUser(user, availableGame.gameId);
           await availableGame.updateSecondPlayer(user.userId);
@@ -142,28 +151,30 @@ export class GameManager {
           user.socket.send(
             JSON.stringify({
               type: GAME_NOT_FOUND,
-            }),
+            })
           );
           return;
         }
 
-        if(gameFromDb.status !== GameStatus.IN_PROGRESS) {
-          user.socket.send(JSON.stringify({
-            type: GAME_ENDED,
-            payload: {
-              result: gameFromDb.result,
-              status: gameFromDb.status,
-              moves: gameFromDb.moves,
-              blackPlayer: {
-                id: gameFromDb.blackPlayer.id,
-                name: gameFromDb.blackPlayer.name,
+        if (gameFromDb.status !== GameStatus.IN_PROGRESS) {
+          user.socket.send(
+            JSON.stringify({
+              type: GAME_ENDED,
+              payload: {
+                result: gameFromDb.result,
+                status: gameFromDb.status,
+                moves: gameFromDb.moves,
+                blackPlayer: {
+                  id: gameFromDb.blackPlayer.id,
+                  name: gameFromDb.blackPlayer.name,
+                },
+                whitePlayer: {
+                  id: gameFromDb.whitePlayer.id,
+                  name: gameFromDb.whitePlayer.name,
+                },
               },
-              whitePlayer: {
-                id: gameFromDb.whitePlayer.id,
-                name: gameFromDb.whitePlayer.name,
-              },
-            }
-          }));
+            })
+          );
           return;
         }
 
@@ -172,7 +183,7 @@ export class GameManager {
             gameFromDb?.whitePlayerId!,
             gameFromDb?.blackPlayerId!,
             gameFromDb.id,
-            gameFromDb.startAt,
+            gameFromDb.startAt
           );
           game.seedMoves(gameFromDb?.moves || []);
           this.games.push(game);
@@ -199,7 +210,7 @@ export class GameManager {
               player1TimeConsumed: availableGame.getPlayer1TimeConsumed(),
               player2TimeConsumed: availableGame.getPlayer2TimeConsumed(),
             },
-          }),
+          })
         );
 
         socketManager.addUser(user, gameId);
