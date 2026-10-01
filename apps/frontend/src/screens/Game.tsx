@@ -48,6 +48,8 @@ import GameEndModal from '@/components/GameEndModal';
 import { Waitopponent } from '@/components/ui/waitopponent';
 import { ShareGame } from '../components/ShareGame';
 import ExitGameModel from '@/components/ExitGameModel';
+import { VideoCall } from '@/components/video-call/VideoCall';
+import { isVideoSignalMessage } from '@/lib/video-call/signaling';
 
 const moveAudio = new Audio(MoveSound);
 
@@ -71,7 +73,7 @@ export const Game = () => {
   const [result, setResult] = useState<GameResult | null>(null);
   const [player1TimeConsumed, setPlayer1TimeConsumed] = useState(0);
   const [player2TimeConsumed, setPlayer2TimeConsumed] = useState(0);
-  const [gameID,setGameID] = useState("");
+  const [gameID, setGameID] = useState('');
   const setMoves = useSetRecoilState(movesAtom);
   const userSelectedMoveIndex = useRecoilValue(userSelectedMoveIndexAtom);
   const userSelectedMoveIndexRef = useRef(userSelectedMoveIndex);
@@ -92,10 +94,12 @@ export const Game = () => {
     }
     socket.onmessage = function (event) {
       const message = JSON.parse(event.data);
+      // Video-call signaling is handled by useVideoCall, not by this switch.
+      if (isVideoSignalMessage(message)) return;
       switch (message.type) {
         case GAME_ADDED:
           setAdded(true);
-          setGameID((p)=>message.gameId);
+          setGameID((p) => message.gameId);
           break;
         case INIT_GAME:
           setBoard(chess.board());
@@ -107,8 +111,7 @@ export const Game = () => {
           });
           break;
         case MOVE:
-          const { move, player1TimeConsumed, player2TimeConsumed } =
-            message.payload;
+          const { move, player1TimeConsumed, player2TimeConsumed } = message.payload;
           setPlayer1TimeConsumed(player1TimeConsumed);
           setPlayer2TimeConsumed(player2TimeConsumed);
           if (userSelectedMoveIndexRef.current !== null) {
@@ -199,7 +202,7 @@ export const Game = () => {
           payload: {
             gameId,
           },
-        }),
+        })
       );
     }
   }, [chess, socket]);
@@ -238,11 +241,21 @@ export const Game = () => {
         payload: {
           gameId,
         },
-      }),
+      })
     );
     setMoves([]);
     navigate('/');
   };
+
+  // The other player, or null if I am only spectating (no video call then).
+  const opponent =
+    user && gameMetadata
+      ? user.id === gameMetadata.whitePlayer?.id
+        ? gameMetadata.blackPlayer
+        : user.id === gameMetadata.blackPlayer?.id
+          ? gameMetadata.whitePlayer
+          : null
+      : null;
 
   if (!socket) return <div>Connecting...</div>;
 
@@ -256,16 +269,13 @@ export const Game = () => {
         ></GameEndModal>
       )}
       {started && (
-        <div className="justify-center flex pt-4 text-white">
-          {(user.id === gameMetadata?.blackPlayer?.id ? 'b' : 'w') ===
-          chess.turn()
-            ? 'Your turn'
-            : "Opponent's turn"}
+        <div className="flex justify-center pt-4 text-white">
+          {(user.id === gameMetadata?.blackPlayer?.id ? 'b' : 'w') === chess.turn() ? 'Your turn' : "Opponent's turn"}
         </div>
       )}
-      <div className="justify-center flex">
-        <div className="pt-2 w-full">
-          <div className="flex gap-8 w-full">
+      <div className="flex justify-center">
+        <div className="w-full pt-2">
+          <div className="flex w-full gap-8">
             <div className="text-white">
               <div className="flex justify-center">
                 <div>
@@ -274,9 +284,7 @@ export const Game = () => {
                       <div className="flex justify-between">
                         <UserAvatar gameMetadata={gameMetadata} />
                         {getTimer(
-                          user.id === gameMetadata?.whitePlayer?.id
-                            ? player2TimeConsumed
-                            : player1TimeConsumed,
+                          user.id === gameMetadata?.whitePlayer?.id ? player2TimeConsumed : player1TimeConsumed
                         )}
                       </div>
                     </div>
@@ -286,9 +294,7 @@ export const Game = () => {
                       <ChessBoard
                         started={started}
                         gameId={gameId ?? ''}
-                        myColor={
-                          user.id === gameMetadata?.blackPlayer?.id ? 'b' : 'w'
-                        }
+                        myColor={user.id === gameMetadata?.blackPlayer?.id ? 'b' : 'w'}
                         chess={chess}
                         setBoard={setBoard}
                         socket={socket}
@@ -297,13 +303,9 @@ export const Game = () => {
                     </div>
                   </div>
                   {started && (
-                    <div className="mt-4 flex justify-between">
+                    <div className="flex justify-between mt-4">
                       <UserAvatar gameMetadata={gameMetadata} self />
-                      {getTimer(
-                        user.id === gameMetadata?.blackPlayer?.id
-                          ? player2TimeConsumed
-                          : player1TimeConsumed,
-                      )}
+                      {getTimer(user.id === gameMetadata?.blackPlayer?.id ? player2TimeConsumed : player1TimeConsumed)}
                     </div>
                   )}
                 </div>
@@ -311,11 +313,13 @@ export const Game = () => {
             </div>
             <div className="rounded-md pt-2 bg-bgAuxiliary3 flex-1 overflow-auto h-[95vh] overflow-y-scroll no-scrollbar">
               {!started ? (
-                <div className="pt-8 flex justify-center w-full">
+                <div className="flex justify-center w-full pt-8">
                   {added ? (
-                    <div className='flex flex-col items-center space-y-4 justify-center'>
-                      <div className="text-white"><Waitopponent/></div>
-                      <ShareGame gameId={gameID}/>
+                    <div className="flex flex-col items-center justify-center space-y-4">
+                      <div className="text-white">
+                        <Waitopponent />
+                      </div>
+                      <ShareGame gameId={gameID} />
                     </div>
                   ) : (
                     gameId === 'random' && (
@@ -324,7 +328,7 @@ export const Game = () => {
                           socket.send(
                             JSON.stringify({
                               type: INIT_GAME,
-                            }),
+                            })
                           );
                         }}
                       >
@@ -334,9 +338,12 @@ export const Game = () => {
                   )}
                 </div>
               ) : (
-                <div className="p-8 flex justify-center w-full">
+                <div className="flex justify-center w-full p-8">
                   <ExitGameModel onClick={() => handleExit()} />
                 </div>
+              )}
+              {started && opponent && gameId && gameId !== 'random' && (
+                <VideoCall socket={socket} gameId={gameId} opponent={opponent} />
               )}
               <div>
                 <MovesTable />
@@ -348,4 +355,3 @@ export const Game = () => {
     </div>
   );
 };
-
